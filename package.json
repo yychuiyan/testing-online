@@ -1,0 +1,17 @@
+{
+  "name": "test-online",
+  "version": "1.0.0",
+  "private": true,
+  "description": "独立测试练习网站 - 自动化测试、性能测试、测试理论",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:client\" \"npm run dev:server\"",
+    "dev:client": "npm --prefix client run dev",
+    "dev:server": "npm --prefix server run dev",
+    "build": "npm --prefix client run build",
+    "start": "npm --prefix server run start",
+    "install:all": "npm install && npm --prefix client install && npm --prefix server install"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}
