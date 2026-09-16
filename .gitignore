@@ -4,3 +4,7 @@ dist/
 *.log
 .DS_Store
 *.tsbuildinfo
+.history/
+server/uploads/
+test-results/
+*.jtl
