@@ -3,7 +3,7 @@ import { useEffect } from 'react'
 export function useDocumentTitle(title: string) {
   useEffect(() => {
     const prev = document.title
-    document.title = title ? `${title} - 优选商城` : '优选商城'
+    document.title = title || '场景测试平台'
     return () => {
       document.title = prev
     }

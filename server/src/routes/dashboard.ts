@@ -20,13 +20,19 @@ export function setCartRef(data: any[]) { cartRef = data }
  */
 dashboardRouter.get('/stats', requireAuth, (_req: Request, res: Response) => {
   const today = new Date().toISOString().slice(0, 10)
+  const now = new Date()
 
-  const todayOrders = ordersData.filter((o: any) => o.createdAt.slice(0, 10) === today)
-  const monthOrders = ordersData.filter((o: any) => {
+  // 单次遍历同时算出「今日营收」和「本月营收」，避免两次全表扫描
+  let revenueToday = 0
+  let revenueMonth = 0
+  for (const o of ordersData) {
+    if (o.createdAt.slice(0, 10) === today) revenueToday += o.actualAmount
+
     const orderDate = new Date(o.createdAt)
-    const now = new Date()
-    return orderDate.getMonth() === now.getMonth() && orderDate.getFullYear() === now.getFullYear()
-  })
+    if (orderDate.getMonth() === now.getMonth() && orderDate.getFullYear() === now.getFullYear()) {
+      revenueMonth += o.actualAmount
+    }
+  }
 
   return res.json({
     success: true,
@@ -36,8 +42,8 @@ dashboardRouter.get('/stats', requireAuth, (_req: Request, res: Response) => {
       totalProducts: productsData.length,
       totalOrders: ordersData.length,
       cartCount: cartRef.length,
-      revenueToday: todayOrders.reduce((sum: number, o: any) => sum + o.actualAmount, 0),
-      revenueMonth: monthOrders.reduce((sum: number, o: any) => sum + o.actualAmount, 0),
+      revenueToday,
+      revenueMonth,
     },
   })
 })
@@ -47,16 +53,22 @@ dashboardRouter.get('/stats', requireAuth, (_req: Request, res: Response) => {
  * 近 N 天趋势数据（基于日志）
  */
 dashboardRouter.get('/trends', requireAuth, (req: Request, res: Response) => {
-  const days = parseInt(String(req.query.days || '7'))
+  const days = Math.min(Math.max(parseInt(String(req.query.days || '7'), 10) || 7, 1), 90)
+
+  // 先按日期聚合一次，避免 days × logs 的双重循环
+  const countByDate = new Map<string, number>()
+  for (const l of logsRef) {
+    const date = l.createdAt.slice(0, 10)
+    countByDate.set(date, (countByDate.get(date) || 0) + 1)
+  }
 
   const trends = Array.from({ length: days }, (_, i) => {
     const d = new Date()
     d.setDate(d.getDate() - (days - 1 - i))
     const dateStr = d.toISOString().slice(0, 10)
-    const count = logsRef.filter((l: any) => l.createdAt.slice(0, 10) === dateStr).length
     return {
       date: `${d.getMonth() + 1}/${d.getDate()}`,
-      value: count,
+      value: countByDate.get(dateStr) || 0,
     }
   })
 

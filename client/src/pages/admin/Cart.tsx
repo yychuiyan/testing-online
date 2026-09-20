@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { MinusOutlined, PlusOutlined, DeleteOutlined, ShoppingCartOutlined } from '@ant-design/icons'
 import { List, Avatar, Button, InputNumber, Typography, Card, Empty, Space, Skeleton } from 'antd'
 import { api } from '../../lib/api'
@@ -11,8 +11,10 @@ export default function Cart() {
   useDocumentTitle('购物车')
   const [items, setItems] = useState<any[]>([])
   const [loading, setLoading] = useState(true)
+  const [submitting, setSubmitting] = useState(false)
+  const navigate = useNavigate()
   const { confirm } = useModal()
-  const { success } = useToast()
+  const { success, error } = useToast()
 
   const fetchCart = useCallback(async () => {
     const res = await api.cart.list()
@@ -21,6 +23,23 @@ export default function Cart() {
   }, [])
 
   useEffect(() => { fetchCart() }, [fetchCart])
+
+  /** 结算：不传 items，由服务端按当前购物车下单，成功后服务端会清空购物车 */
+  const handleCheckout = async () => {
+    setSubmitting(true)
+    try {
+      const res = await api.orders.create()
+      if (res.success && res.data) {
+        success(`下单成功 ${res.data.orderNo}`, `合计 ¥${res.data.totalAmount}`)
+        setItems([])
+        navigate('/admin/orders')
+      } else {
+        error('下单失败', res.message)
+      }
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   const handleQuantity = async (id: number, qty: number) => {
     if (qty < 1) return
@@ -86,6 +105,15 @@ export default function Cart() {
               <Space>
                 <Typography.Text type="secondary">合计：</Typography.Text>
                 <Typography.Title level={3} type="danger" style={{ margin: 0 }}>¥{total.toFixed(2)}</Typography.Title>
+                <Button
+                  type="primary"
+                  size="large"
+                  loading={submitting}
+                  onClick={handleCheckout}
+                  data-testid="checkout-btn"
+                >
+                  去结算
+                </Button>
               </Space>
             </div>
           </Card>

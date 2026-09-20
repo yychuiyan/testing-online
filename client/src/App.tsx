@@ -11,6 +11,7 @@ import ProductForm from './pages/admin/ProductForm'
 import OrderList from './pages/admin/OrderList'
 import FileDownload from './pages/admin/FileDownload'
 import PerfTest from './pages/admin/PerfTest'
+import LlmTest from './pages/admin/LlmTest'
 import Cart from './pages/admin/Cart'
 import OrderDetail from './pages/admin/OrderDetail'
 import LogList from './pages/admin/LogList'
@@ -46,6 +47,7 @@ export default function App() {
         <Route path="logs" element={<LogList />} />
         <Route path="download" element={<FileDownload />} />
         <Route path="perf" element={<PerfTest />} />
+        <Route path="llm" element={<LlmTest />} />
 
       </Route>
 

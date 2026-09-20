@@ -71,6 +71,11 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<ApiR
     if (err instanceof DOMException && err.name === 'AbortError') {
       return { success: false, message: '请求超时' }
     }
+    // fetch 连不上后端时抛 TypeError（与网络断开、凭证错误区分开），
+    // 否则统一提示「检查网络连接」会把人往密码/网络方向带偏
+    if (err instanceof TypeError) {
+      return { success: false, message: '无法连接服务器，请确认后端已启动（默认 http://localhost:3001）' }
+    }
     return { success: false, message: '网络错误，请检查网络连接' }
   }
 }
@@ -109,6 +114,22 @@ export async function uploadFile(file: File): Promise<ApiResponse<{ url: string;
   } catch {
     return { success: false, message: '上传失败' }
   }
+}
+
+/**
+ * 大模型接口的原始请求入口。
+ *
+ * 为什么不走 request()：
+ *   1. 大模型接口是 OpenAI 兼容格式，没有 { success, data } 信封，强转会拿到错东西；
+ *   2. 测 TTFT 必须逐块读响应流，request() 一次性 await res.json() 拿不到中间态。
+ * 这里只负责把鉴权头带上，其余交给调用方。
+ */
+export function llmFetch(path: string, init: RequestInit = {}): Promise<Response> {
+  const headers = new Headers(authHeaders(init.headers))
+  if (!headers.has('Content-Type') && init.body != null) {
+    headers.set('Content-Type', 'application/json')
+  }
+  return fetch(`${BASE_URL}${path}`, { ...init, headers })
 }
 
 export const api = {
@@ -170,6 +191,9 @@ export const api = {
     },
     detail: (id: number) => get<Order>(`/orders/${id}`),
     updateStatus: (id: number, status: string) => put<Order>(`/orders/${id}/status`, { status }),
+    /** 下单。不传 items 即结算购物车；传 items 则按商品直接下单 */
+    create: (payload?: { items?: { productId: number; quantity: number }[]; address?: string; paymentMethod?: string }) =>
+      post<Order>('/orders', payload ?? {}),
   },
 
   logs: {
@@ -186,11 +210,17 @@ export const api = {
       users: number
       products: number
       memory: { rss: number; heapUsed: number; heapTotal: number }
+      cache: { size: number; hits: number; misses: number; hitRate: number }
     }>('/perf/stats'),
     generate: (type: 'products' | 'users', count: number) =>
       post<{ count: number; elapsed: string }>('/perf/generate', { type, count }),
     clear: (type: 'products' | 'users') =>
       post<{ removed: number }>('/perf/clear', { type }),
+    reset: () =>
+      post<{
+        before: { products: number; users: number; orders: number; logs: number }
+        after: { products: number; users: number; orders: number; logs: number }
+      }>('/perf/reset'),
     slow: (delay: number) => get<{ delay: number; timestamp: string }>(`/perf/slow?delay=${delay}`),
     stress: (concurrency: number) =>
       post<{
@@ -199,6 +229,33 @@ export const api = {
         avgResponseTime: string
         maxResponseTime: string
         minResponseTime: string
+        hint?: string
       }>('/perf/stress', { concurrency }),
   },
+
+  /** 压测场景接口：给 Locust / JMeter 练习用的可控变量 */
+  scenario: {
+    failRate: (rate: number) =>
+      get<{ injected: boolean; rate: number }>(`/scenario/fail-rate?rate=${rate}`),
+    payload: (sizeKb: number) =>
+      get<{ sizeKb: number }>(`/scenario/payload?size=${sizeKb}`),
+    cpu: (rounds: number) =>
+      get<{ rounds: number; iterations: number; serverComputeMs: number }>(`/scenario/cpu?rounds=${rounds}`),
+    cached: () =>
+      get<{ count: number; priceSum: number; maxPrice: number; onSale: number; cacheHit: boolean; ttlMs: number }>('/scenario/cached'),
+    uncached: (rounds: number) =>
+      get<{ count: number; rounds: number; cacheHit: boolean }>(`/scenario/uncached?rounds=${rounds}`),
+    rateLimited: (limit: number, windowMs: number) =>
+      get<{ count: number; limit: number; remaining: number }>(`/scenario/rate-limited?limit=${limit}&window=${windowMs}`),
+    metrics: () => get<ServerMetrics>('/scenario/metrics'),
+    resetMetrics: () => post<ServerMetrics>('/scenario/metrics/reset'),
+  },
+}
+
+export interface ServerMetrics {
+  eventLoop: { currentLagMs: number; peakLagMs: number; sampleIntervalMs: number }
+  cpuPercent: number
+  uptimeSec: number
+  handles: number
+  memory: { rssMb: number; heapUsedMb: number; heapTotalMb: number; externalMb: number }
 }

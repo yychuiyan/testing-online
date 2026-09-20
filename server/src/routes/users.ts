@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express'
-import { requireAuth, requirePermission, requireRole, users as userList, type ServerUser } from '../middleware/auth.js'
+import { requireAuth, requirePermission, requireRole, users as userList, invalidateUserIndex, type ServerUser } from '../middleware/auth.js'
 import { addLog } from './logs.js'
+import { VersionedCache } from '../lib/query-cache.js'
+import { parsePagination, paginated } from '../lib/pagination.js'
 
 export const usersRouter = Router()
 
@@ -10,37 +12,73 @@ const PROTECTED_NAMES = ['炊烟1号', '炊烟2号']
 
 let nextUserId = userList.length + 1
 
+/** 种子数据快照：模块加载时深拷贝一份，重置时整体还原 */
+const SEED_USERS = structuredClone(userList)
+
+/** 种子用户条数 */
+export const SEED_USER_COUNT = SEED_USERS.length
+
+/** 还原为初始种子用户 */
+export function resetUsers() {
+  userList.length = 0
+  userList.push(...structuredClone(SEED_USERS))
+  nextUserId = userList.length + 1
+  invalidateUsers()
+}
+
+/**
+ * id → 用户 的索引。
+ * 原先 GET /users/:id 是 O(n) 线性扫描，用户被撑到 5 万条后每次都要扫全表。
+ */
+let userIndex: Map<number, ServerUser> | null = null
+
+function userById(id: number) {
+  if (!userIndex) {
+    userIndex = new Map()
+    for (const u of userList) userIndex.set(u.id, u)
+  }
+  return userIndex.get(id)
+}
+
+/** 列表查询结果缓存：数据未变更时复用「过滤 + 分页」结果 */
+const listCache = new VersionedCache<string, any>(200)
+
+/** 用户数组发生增删后必须调用 */
+function invalidateUsers() {
+  userIndex = null
+  listCache.bump()
+  invalidateUserIndex()
+}
+
 /**
  * GET /api/users
  * 用户列表 — 分页、搜索、角色筛选
  */
 usersRouter.get('/', requireAuth, requirePermission('users.read'), (req: Request, res: Response) => {
-  const page = parseInt(String(req.query.page || '1'))
-  const pageSize = parseInt(String(req.query.pageSize || '5'))
+  const p = parsePagination(req, 5)
   const keyword = String(req.query.keyword || '').toLowerCase()
   const role = String(req.query.role || '')
 
-  let filtered = [...userList]
+  const cacheKey = `${p.page}|${p.pageSize}|${keyword}|${role}`
+  const data = listCache.remember(cacheKey, () => {
+    let filtered: ServerUser[] = userList
+    if (keyword) {
+      filtered = filtered.filter(
+        (u) => u.username.toLowerCase().includes(keyword) || u.email.toLowerCase().includes(keyword)
+      )
+    }
+    if (role) {
+      filtered = filtered.filter((u) => u.role === role)
+    }
 
-  if (keyword) {
-    filtered = filtered.filter(u =>
-      u.username.toLowerCase().includes(keyword) ||
-      u.email.toLowerCase().includes(keyword)
-    )
-  }
-  if (role) {
-    filtered = filtered.filter(u => u.role === role)
-  }
-
-  const total = filtered.length
-  const start = (page - 1) * pageSize
-  const items = filtered.slice(start, start + pageSize).map(({ password, ...rest }) => rest)
-
-  return res.json({
-    success: true,
-    message: 'ok',
-    data: { items, total, page, pageSize, totalPages: Math.ceil(total / pageSize) },
+    const total = filtered.length
+    const items = filtered
+      .slice(p.start, p.start + p.pageSize)
+      .map(({ password, ...rest }) => rest)
+    return paginated(items, total, p)
   })
+
+  return res.json({ success: true, message: 'ok', data })
 })
 
 /**
@@ -49,7 +87,7 @@ usersRouter.get('/', requireAuth, requirePermission('users.read'), (req: Request
  */
 usersRouter.get('/:id', requireAuth, requirePermission('users.read'), (req: Request, res: Response) => {
   const id = parseInt(String(req.params.id))
-  const user = userList.find(u => u.id === id)
+  const user = userById(id)
   if (!user) return res.status(404).json({ success: false, message: '用户不存在' })
 
   const { password, ...rest } = user
@@ -88,6 +126,7 @@ usersRouter.post('/', requireAuth, requirePermission('users.write'), (req: Reque
     createdAt: new Date().toISOString(),
   }
   userList.push(newUser)
+  invalidateUsers()
 
   addLog(currentUser.id, currentUser.username, 'create', 'users', `新增用户 ${username}（${assignedRole}）`)
 
@@ -112,6 +151,7 @@ usersRouter.put('/:id', requireAuth, requirePermission('users.write'), (req: Req
   if (email) userList[index].email = email
   if (status) userList[index].status = status
   if (password) userList[index].password = password
+  invalidateUsers()
 
   addLog(currentUser.id, currentUser.username, 'update', 'users', `修改用户 ${userList[index].username}`)
 
@@ -138,6 +178,7 @@ usersRouter.delete('/:id', requireAuth, requireRole('admin'), (req: Request, res
   }
 
   userList.splice(index, 1)
+  invalidateUsers()
   addLog(currentUser.id, currentUser.username, 'delete', 'users', `删除用户 ${deletedUser.username}`)
 
   return res.json({ success: true, message: '用户已删除' })

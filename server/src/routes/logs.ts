@@ -1,6 +1,7 @@
 import { Router, Request, Response } from 'express'
 import { requireAuth } from '../middleware/auth.js'
 import { setLogsRef } from './dashboard.js'
+import { parsePagination, paginated } from '../lib/pagination.js'
 
 export const logsRouter = Router()
 
@@ -20,6 +21,27 @@ const logs: any[] = [
 setLogsRef(logs)
 
 let nextLogId = 9
+
+/**
+ * 种子快照。注意 addLog 用的是 unshift（新日志在最前），
+ * 所以不能靠「截断前 N 条」还原——那样留下的恰好是新数据。
+ */
+const SEED_LOGS = structuredClone(logs)
+
+/** 种子日志条数 */
+export const SEED_LOG_COUNT = SEED_LOGS.length
+
+/** 当前日志条数 */
+export function logCount() {
+  return logs.length
+}
+
+/** 还原为初始种子日志（后续新增的日志全部丢弃） */
+export function resetLogs() {
+  logs.length = 0
+  logs.push(...structuredClone(SEED_LOGS))
+  nextLogId = logs.length + 1
+}
 
 const MAX_LOGS = 50
 
@@ -44,12 +66,11 @@ export function addLog(userId: number, username: string, action: string, module:
  * 操作日志列表
  */
 logsRouter.get('/', requireAuth, (req: Request, res: Response) => {
-  const page = parseInt(String(req.query.page || '1'))
-  const pageSize = parseInt(String(req.query.pageSize || '5'))
+  const p = parsePagination(req, 5)
   const username = String(req.query.username || '')
   const action = String(req.query.action || '')
 
-  let filtered = [...logs]
+  let filtered: any[] = logs
 
   if (username) {
     filtered = filtered.filter(l => l.username.includes(username))
@@ -59,12 +80,11 @@ logsRouter.get('/', requireAuth, (req: Request, res: Response) => {
   }
 
   const total = filtered.length
-  const start = (page - 1) * pageSize
-  const items = filtered.slice(start, start + pageSize)
+  const items = filtered.slice(p.start, p.start + p.pageSize)
 
   return res.json({
     success: true,
     message: 'ok',
-    data: { items, total, page, pageSize, totalPages: Math.ceil(total / pageSize) },
+    data: paginated(items, total, p),
   })
 })

@@ -4,55 +4,8 @@ import { Tabs, Card, Statistic, Row, Col, Table, Tag, Typography, Button, Space 
 import { api } from '../../lib/api'
 import { useDocumentTitle } from '../../lib/useDocumentTitle'
 import { useAuth } from '../../lib/auth'
+import { FUNCTION_ENDPOINTS, PERF_ENDPOINTS, type ApiEndpoint } from '../../lib/endpoints'
 import type { DashboardStats } from '../../lib/types'
-
-interface ApiEndpoint {
-  method: string
-  path: string
-  desc: string
-  params?: string
-  body?: string
-}
-
-const API_ENDPOINTS: ApiEndpoint[] = [
-  { method: 'POST', path: '/api/auth/login', desc: '用户登录，返回 Bearer Token', body: '{ username, password }' },
-  { method: 'POST', path: '/api/auth/register', desc: '注册新账号（默认禁用）', body: '{ username, email, password, phone?, role? }' },
-  { method: 'POST', path: '/api/auth/logout', desc: '用户登出（需 Authorization）' },
-  { method: 'GET', path: '/api/auth/me', desc: '获取当前用户信息（需 Authorization）' },
-  { method: 'GET', path: '/api/users', desc: '用户列表', params: '?page=1&pageSize=5&keyword=&role=' },
-  { method: 'GET', path: '/api/users/:id', desc: '用户详情' },
-  { method: 'POST', path: '/api/users', desc: '新增用户', body: '{ username, email, password, role? }' },
-  { method: 'PUT', path: '/api/users/:id', desc: '编辑用户', body: '{ username?, email?, status?, password? }' },
-  { method: 'DELETE', path: '/api/users/:id', desc: '删除用户（仅超管）' },
-  { method: 'PUT', path: '/api/users/:id/role', desc: '修改角色（仅超管）', body: '{ role }' },
-  { method: 'GET', path: '/api/products', desc: '商品列表', params: '?page=1&pageSize=6&keyword=&categoryId=&sortBy=price' },
-  { method: 'GET', path: '/api/products/categories', desc: '商品分类列表' },
-  { method: 'GET', path: '/api/products/:id', desc: '商品详情' },
-  { method: 'POST', path: '/api/products', desc: '新增商品', body: '{ name, price, description?, brand?, stock?, ... }' },
-  { method: 'PUT', path: '/api/products/:id', desc: '编辑商品', body: '{ name?, price?, status?, ... }' },
-  { method: 'DELETE', path: '/api/products/:id', desc: '删除商品' },
-  { method: 'POST', path: '/api/upload', desc: '上传图片', body: 'FormData { file }' },
-  { method: 'GET', path: '/api/cart', desc: '获取购物车' },
-  { method: 'POST', path: '/api/cart', desc: '加入购物车', body: '{ productId, quantity? }' },
-  { method: 'PUT', path: '/api/cart/:id', desc: '修改数量', body: '{ quantity }' },
-  { method: 'DELETE', path: '/api/cart/:id', desc: '移除购物车项' },
-  { method: 'GET', path: '/api/orders', desc: '订单列表', params: '?page=1&pageSize=5&keyword=&status=' },
-  { method: 'GET', path: '/api/orders/:id', desc: '订单详情' },
-  { method: 'PUT', path: '/api/orders/:id/status', desc: '修改订单状态', body: '{ status }' },
-  { method: 'GET', path: '/api/dashboard/stats', desc: '仪表盘统计数据' },
-  { method: 'GET', path: '/api/dashboard/trends', desc: '近 N 天趋势', params: '?days=7' },
-  { method: 'GET', path: '/api/logs', desc: '操作日志列表', params: '?page=1&pageSize=5&username=&action=' },
-  { method: 'GET', path: '/api/perf/stats', desc: '服务器资源统计' },
-  { method: 'POST', path: '/api/perf/generate', desc: '批量生成测试数据', body: '{ type, count }' },
-  { method: 'POST', path: '/api/perf/clear', desc: '清除生成的数据', body: '{ type }' },
-  { method: 'GET', path: '/api/mock/timeout', desc: '模拟超时', params: '?delay=3000' },
-  { method: 'GET', path: '/api/mock/status/:code', desc: '返回指定状态码' },
-  { method: 'GET', path: '/api/mock/random', desc: '随机成功/失败' },
-  { method: 'POST', path: '/api/mock/echo', desc: '回显请求信息', body: '{ ... }' },
-  { method: 'GET', path: '/api/mock/download', desc: '模拟文件下载' },
-  { method: 'GET', path: '/api/perf/slow', desc: '慢接口测试', params: '?delay=2000' },
-  { method: 'POST', path: '/api/perf/stress', desc: '并发压测', body: '{ concurrency }' },
-]
 
 const methodColor = (m: string) => {
   switch (m) {
@@ -62,6 +15,44 @@ const methodColor = (m: string) => {
     case 'DELETE': return 'error'
     default: return 'default'
   }
+}
+
+/**
+ * 把相邻同组行的「分组」列合并成一个单元格。
+ * 依赖 dataSource 保持数组原顺序，所以 endpoints 里同组的要写在一起。
+ */
+function mergeGroup(list: ApiEndpoint[]) {
+  return (record: ApiEndpoint) => {
+    const firstIdx = list.findIndex(e => e.group === record.group)
+    if (firstIdx === -1 || list[firstIdx] !== record) return { rowSpan: 0 }
+    return { rowSpan: list.filter(e => e.group === record.group).length }
+  }
+}
+
+/** 接口表格的列定义（功能列表与性能列表共用） */
+function endpointColumns(list: ApiEndpoint[]) {
+  return [
+    {
+      title: '分组', dataIndex: 'group', width: 96, onCell: mergeGroup(list),
+      render: (g: string) => <Typography.Text strong style={{ fontSize: 12 }}>{g}</Typography.Text>,
+    },
+    { title: '方法', dataIndex: 'method', width: 68, render: (m: string) => <Tag color={methodColor(m)}>{m}</Tag> },
+    { title: '路径', dataIndex: 'path', width: 260, render: (p: string) => <Typography.Text code style={{ fontSize: 12 }}>{p}</Typography.Text> },
+    {
+      title: '参数', width: 250, render: (_: unknown, ep: ApiEndpoint) => {
+        if (ep.params) return <Typography.Text style={{ color: '#d48806', fontSize: 12 }}>{ep.params}</Typography.Text>
+        if (ep.body) return <Typography.Text style={{ color: '#722ed1', fontSize: 12 }}>{ep.body}</Typography.Text>
+        return <Typography.Text type="secondary">—</Typography.Text>
+      },
+    },
+    {
+      title: '鉴权', dataIndex: 'auth', width: 76,
+      render: (a: string) => (a === 'required'
+        ? <Tag color="gold">需要</Tag>
+        : <Tag>免鉴权</Tag>),
+    },
+    { title: '说明', dataIndex: 'desc' },
+  ]
 }
 
 export default function Dashboard() {
@@ -81,16 +72,7 @@ export default function Dashboard() {
     { label: '购物车数量', value: stats.cartCount, icon: <ShoppingCartOutlined />, color: '#fa8c16' },
   ] : []
 
-  const apiColumns = [
-    { title: '方法', dataIndex: 'method', width: 80, render: (m: string) => <Tag color={methodColor(m)}>{m}</Tag> },
-    { title: '路径', dataIndex: 'path', render: (p: string) => <Typography.Text code style={{ fontSize: 12 }}>{p}</Typography.Text> },
-    { title: '参数', width: 220, render: (_: unknown, ep: ApiEndpoint) => {
-      if (ep.params) return <Typography.Text style={{ color: '#d48806', fontSize: 12 }}>{ep.params}</Typography.Text>
-      if (ep.body) return <Typography.Text style={{ color: '#722ed1', fontSize: 12 }}>{ep.body}</Typography.Text>
-      return <Typography.Text type="secondary">—</Typography.Text>
-    }},
-    { title: '说明', dataIndex: 'desc' },
-  ]
+  const apiColumns = endpointColumns(FUNCTION_ENDPOINTS)
 
   const overviewContent = (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
@@ -120,18 +102,54 @@ export default function Dashboard() {
     </div>
   )
 
-  const apiContent = (
-    <Card title={`可用 API 接口（${API_ENDPOINTS.length} 个）`} extra={
-      <Space size="middle">
-        <Typography.Text style={{ fontSize: 12, color: '#d48806' }}>橙色 = Query 参数</Typography.Text>
-        <Typography.Text style={{ fontSize: 12, color: '#722ed1' }}>紫色 = Body 参数</Typography.Text>
-        <Typography.Text type="secondary" style={{ fontSize: 12 }}>灰色 — = 无参数</Typography.Text>
-      </Space>
-    }>
+  const paramLegend = (
+    <Space size="middle">
+      <Typography.Text style={{ fontSize: 12, color: '#d48806' }}>橙色 = Query 参数</Typography.Text>
+      <Typography.Text style={{ fontSize: 12, color: '#722ed1' }}>紫色 = Body 参数</Typography.Text>
+      <Typography.Text type="secondary" style={{ fontSize: 12 }}>灰色 — = 无参数</Typography.Text>
+    </Space>
+  )
+
+  /** 功能接口：业务能力本身，也是压测时要打的「真实负载」 */
+  const functionContent = (
+    <Card title={`功能接口（${FUNCTION_ENDPOINTS.length} 个）`} extra={paramLegend}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginTop: -8 }}>
+        业务能力接口。做性能测试时，压的就是这些接口——它们才是要称的「货」。
+      </Typography.Paragraph>
       <Table
-        dataSource={API_ENDPOINTS}
-        rowKey={(ep) => ep.path + ep.method}
+        dataSource={FUNCTION_ENDPOINTS}
+        rowKey={(ep) => ep.group + ep.method + ep.path}
         columns={apiColumns}
+        pagination={false}
+        size="small"
+      />
+    </Card>
+  )
+
+  /** 性能接口：压测目标清单——业务功能接口 + 大模型接口，按压测视角组织 */
+  const perfContent = (
+    <Card title={`性能接口列表（${PERF_ENDPOINTS.length} 个）`} extra={paramLegend}>
+      <Typography.Paragraph type="secondary" style={{ fontSize: 13, marginTop: -8 }}>
+        这里是压测要打的<b>实际目标</b>，按压测视角从业务接口中挑出值得压的，每组只留代表性接口，并标注关注点与常见陷阱。
+        它<b>不是</b>功能接口全量：低频后台管理类写操作（改/删商品、改/删用户、改角色）与全部 DELETE 未收录；
+        性能特征重合的只留一条代表（如列表只留「有缓存」的商品列表与「无缓存」的日志列表作对照，详情只留商品详情）；
+        极轻量的（分类列表、模型列表）也不列入。要看完整清单请切到「功能接口列表」。
+        <br />
+        压测不只看吞吐：<Typography.Text code style={{ fontSize: 12 }}>POST /api/orders</Typography.Text>{' '}
+        还支持<b>并发正确性</b>验证——默认并发安全，把环境变量{' '}
+        <Typography.Text code style={{ fontSize: 12 }}>ORDER_RACE_WINDOW_MS</Typography.Text>{' '}
+        设为大于 0，会在「校验库存」与「扣减库存」之间插入 await，人为制造 TOCTOU 窗口，
+        用并发下单复现<b>超卖</b>（实测：库存 5、20 并发全部成功，库存被扣成 −15）。
+        <br />
+        合成类辅助接口（
+        <Typography.Text code style={{ fontSize: 12 }}>/api/scenario/*</Typography.Text>、
+        <Typography.Text code style={{ fontSize: 12 }}>/api/mock/*</Typography.Text>、
+        数据生成与清数、延迟注入）不是业务接口，入口在侧边栏的「性能测试入口」页面。
+      </Typography.Paragraph>
+      <Table
+        dataSource={PERF_ENDPOINTS}
+        rowKey={(ep) => ep.group + ep.method + ep.path}
+        columns={endpointColumns(PERF_ENDPOINTS)}
         pagination={false}
         size="small"
       />
@@ -150,7 +168,8 @@ export default function Dashboard() {
         onChange={setTab}
         items={[
           { key: 'overview', label: '概览', children: overviewContent },
-          { key: 'api', label: '接口列表', children: apiContent },
+          { key: 'function', label: '功能接口列表', children: functionContent },
+          { key: 'performance', label: '性能接口列表', children: perfContent },
         ]}
       />
     </div>

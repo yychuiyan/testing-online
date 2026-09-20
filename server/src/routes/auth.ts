@@ -1,5 +1,6 @@
 import { Router, Request, Response } from 'express'
-import { users, ROLE_PERMISSIONS, sessions, extractBearerToken } from '../middleware/auth.js'
+import { users, ROLE_PERMISSIONS, sessions, extractBearerToken, setSession, findUserByToken, invalidateUserIndex } from '../middleware/auth.js'
+import { envInt } from '../lib/env.js'
 import { addLog } from './logs.js'
 
 export const authRouter = Router()
@@ -18,7 +19,7 @@ authRouter.post('/login', (req: Request, res: Response) => {
     return res.status(401).json({ success: false, message: '用户名或密码错误' })
   }
 
-  sessions.set(user.token, user.username)
+  setSession(user.token, user.username)
   user.lastLoginAt = new Date().toISOString()
 
   addLog(user.id, user.username, 'login', 'auth', '用户登录系统')
@@ -65,7 +66,8 @@ authRouter.post('/register', (req: Request, res: Response) => {
     return res.status(409).json({ success: false, message: '邮箱已被注册' })
   }
 
-  const MAX_USERS = 10
+  // 用户数上限可用环境变量调整：压测「注册」场景时放开，默认保留保护
+  const MAX_USERS = envInt('MAX_USERS', 1000)
   if (users.length >= MAX_USERS) {
     return res.status(429).json({ success: false, message: `用户数已达上限（${MAX_USERS}），请联系管理员` })
   }
@@ -88,6 +90,7 @@ authRouter.post('/register', (req: Request, res: Response) => {
     createdAt: new Date().toISOString(),
   }
   users.push(newUser)
+  invalidateUserIndex()
 
   if (currentUser) {
     addLog(currentUser.id, currentUser.username, 'create', 'auth', `创建用户 ${username}（${assignedRole}）`)
@@ -131,7 +134,7 @@ authRouter.get('/me', (req: Request, res: Response) => {
     return res.status(401).json({ success: false, message: '未登录或登录已过期' })
   }
 
-  const user = users.find(u => u.token === token)
+  const user = findUserByToken(token)
   if (!user) {
     return res.status(401).json({ success: false, message: '用户不存在' })
   }
